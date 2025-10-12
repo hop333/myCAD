@@ -1,0 +1,3 @@
+DEFAULT_BG = "#ffffff"
+DEFAULT_GRID = "#e0e0e0"
+DEFAULT_SEGMENT = "#ff0000"
