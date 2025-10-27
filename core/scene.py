@@ -1,6 +1,6 @@
-from math import atan2, degrees, sqrt
 from core.segment import Segment
 from core.geometry import polar_to_cartesian
+from math import sqrt, atan2, degrees
 
 class Scene:
     def __init__(self):
@@ -18,11 +18,11 @@ class Scene:
 
     def describe(self, degrees_mode=True):
         info = ""
-        for i, seg in enumerate(self.segments):
+        for seg in self.segments:
             length = seg.length()
             angle = seg.angle(degrees_mode)
             info += (
-                f"Отрезок {i+1}:\n"
+                f"Отрезок {seg.uid}:\n"
                 f"  Точка1: ({seg.x1:.2f}, {seg.y1:.2f})\n"
                 f"  Точка2: ({seg.x2:.2f}, {seg.y2:.2f})\n"
                 f"  Длина: {length:.2f}, Угол: {angle:.2f}\n\n"
