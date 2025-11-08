@@ -1,8 +1,8 @@
 import tkinter as tk
 from tkinter import simpledialog, colorchooser, messagebox
 from math import sqrt, atan2, degrees
-# Предполагается, что 'core.scene' существует
 from core.scene import Scene
+import sys  # Добавляем для проверки платформы для горячих клавиш
 
 
 def distance_point_to_segment(px, py, x1, y1, x2, y2):
@@ -38,10 +38,9 @@ class SceneCADApp:
         self.offset_x = 0
         self.offset_y = 0
         self.scale = 1.0
-        # Используется для хранения начальных координат при перетаскивании (ЛКМ или СКМ)
         self.drag_data = None
 
-        self.tool = tk.StringVar(value="segment")  # segment/pan/delete
+        self.tool = tk.StringVar(value="segment")
         self.snap_enabled = tk.BooleanVar(value=False)
 
         # UI
@@ -57,18 +56,31 @@ class SceneCADApp:
         top = tk.Frame(self.root, bg="#2b2b2b", height=40)
         top.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
+        # Блок систем координат
         tk.Radiobutton(top, text="Декартовы", variable=self.coord_system, value="cartesian",
                        bg="#2b2b2b", fg="white", selectcolor="#444444", font=("Segoe UI", 10)).pack(side=tk.LEFT,
                                                                                                     padx=6)
         tk.Radiobutton(top, text="Полярные", variable=self.coord_system, value="polar",
                        bg="#2b2b2b", fg="white", selectcolor="#444444", font=("Segoe UI", 10)).pack(side=tk.LEFT,
                                                                                                     padx=6)
+
+        # Блок единиц измерения углов
         tk.Radiobutton(top, text="Градусы", variable=self.angle_unit, value="degrees",
                        bg="#2b2b2b", fg="white", selectcolor="#444444", font=("Segoe UI", 10)).pack(side=tk.LEFT,
                                                                                                     padx=6)
         tk.Radiobutton(top, text="Радианы", variable=self.angle_unit, value="radians",
                        bg="#2b2b2b", fg="white", selectcolor="#444444", font=("Segoe UI", 10)).pack(side=tk.LEFT,
                                                                                                     padx=6)
+
+        # --- КНОПКИ МАСШТАБИРОВАНИЯ ---
+        tk.Frame(top, width=2, bg="#444444").pack(side=tk.LEFT, padx=10, fill=tk.Y)
+
+        tk.Button(top, text="🔍+", command=lambda: self.adjust_zoom(1.1),
+                  bg="#3a3a3a", fg="white", relief="flat", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=3)
+        tk.Button(top, text="🔍-", command=lambda: self.adjust_zoom(0.9),
+                  bg="#3a3a3a", fg="white", relief="flat", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=3)
+        tk.Button(top, text="⛶", command=self.zoom_extents,
+                  bg="#3a3a3a", fg="white", relief="flat", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=3)
 
     ## ---------- Боковая панель ----------
     def create_sidebar(self):
@@ -110,7 +122,6 @@ class SceneCADApp:
         if self.preview_line:
             self.canvas.delete(self.preview_line)
             self.preview_line = None
-        # Отвязываем on_motion, чтобы не мешать другим инструментам
         self.canvas.unbind("<Motion>")
         self.update_tool_buttons()
 
@@ -140,18 +151,24 @@ class SceneCADApp:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
 
-        # --- ПАНОРАМИРОВАНИЕ СРЕДНЕЙ КНОПКОЙ МЫШИ (СКМ) ---
+        # ПАНОРАМИРОВАНИЕ СРЕДНЕЙ КНОПКОЙ МЫШИ (СКМ)
         self.canvas.bind("<ButtonPress-2>", self.start_pan_middle_mouse)
         self.canvas.bind("<B2-Motion>", self.do_pan_middle_mouse)
         self.canvas.bind("<ButtonRelease-2>", self.stop_pan_middle_mouse)
-        # --------------------------------------------------
 
-        # Масштабирование
+        # МАСШТАБИРОВАНИЕ КОЛЕСИКОМ (Zoom to Cursor)
         self.canvas.bind("<MouseWheel>", self.on_zoom)
         self.canvas.bind("<Button-4>", self.on_zoom)
         self.canvas.bind("<Button-5>", self.on_zoom)
 
-        # Перерисовка при изменении размера окна
+        # --- ГОРЯЧИЕ КЛАВИШИ МАСШТАБИРОВАНИЯ ---
+        # Определение клавиши Control/Command в зависимости от ОС
+        mod = "Control" if sys.platform.startswith('win') or sys.platform.startswith('linux') else "Command"
+        self.root.bind(f"<{mod}-plus>", self.zoom_in_key)  # Ctrl++
+        self.root.bind(f"<{mod}-minus>", self.zoom_out_key)  # Ctrl+-
+        self.root.bind(f"<{mod}-0>", lambda e: self.zoom_extents())  # Ctrl+0 для "Показать весь чертеж"
+        # ---------------------------------------
+
         self.canvas.bind("<Configure>", lambda e: self.draw_scene())
 
     ## ---------- Методы Обработки Событий ----------
@@ -206,7 +223,6 @@ class SceneCADApp:
     def on_drag(self, e):
         if self.tool.get() != "pan":
             return
-        # Логика панорамирования для ЛКМ
         if not self.drag_data:
             self.drag_data = (e.x, e.y)
         else:
@@ -218,64 +234,116 @@ class SceneCADApp:
             self.draw_scene()
 
     def on_release(self, e):
-        # Сброс drag_data после панорамирования ЛКМ
         self.drag_data = None
 
     # --- Панорамирование СРЕДНЕЙ кнопкой (всегда) ---
     def start_pan_middle_mouse(self, e):
-        """Активация: Устанавливаем начальную позицию для СКМ."""
         self.drag_data = (e.x, e.y)
         self.canvas.config(cursor="hand2")
 
     def do_pan_middle_mouse(self, e):
-        """Перемещение: Выполняем логику панорамирования, используя СКМ."""
         if not self.drag_data:
             return
-
         dx = (e.x - self.drag_data[0]) / self.scale
         dy = (e.y - self.drag_data[1]) / self.scale
-
         self.offset_x -= dx
         self.offset_y += dy
-
         self.drag_data = (e.x, e.y)
-
         self.draw_scene()
 
     def stop_pan_middle_mouse(self, e):
-        """Деактивация: Сбрасываем данные и курсор."""
         self.drag_data = None
         self.canvas.config(cursor="")
 
+    # --- МЕТОДЫ МАСШТАБИРОВАНИЯ ---
+
     def on_zoom(self, e):
-        # 1. Определяем координаты Canvas (курсора)
+        """Масштабирование колесиком мыши (Zoom to Cursor)."""
         canvas_x = e.x
         canvas_y = e.y
 
-        # 2. Преобразуем координаты Canvas в координаты мира (World) ДО зума
         world_x_before, world_y_before = self.canvas_to_world(canvas_x, canvas_y)
 
-        # 3. Определяем коэффициент масштабирования (f)
-        # e.delta > 0 или num == 4 (для Linux/macOS) - это приближение
+        # e.delta > 0 или num == 4 - приближение (увеличение масштаба)
         f = 1.1 if e.delta > 0 or getattr(e, "num", 0) == 4 else 0.9
 
-        # 4. Изменяем масштаб
         self.scale *= f
 
-        # 5. Преобразуем координаты Canvas в координаты мира ПОСЛЕ зума
-        # Новая мировая точка (world_x_after) находится там, где была старая,
-        # если бы мы не сдвинули offset.
         world_x_after, world_y_after = self.canvas_to_world(canvas_x, canvas_y)
 
-        # 6. Вычисляем и применяем необходимый сдвиг (delta)
-        # Нам нужно, чтобы world_x_before (старая точка под курсором)
-        # стала новой точкой self.offset_x.
-
-        # Корректируем смещение (offset) на разницу, чтобы курсор остался на месте
         self.offset_x -= (world_x_after - world_x_before)
         self.offset_y -= (world_y_after - world_y_before)
 
-        # 7. Перерисовываем сцену
+        self.draw_scene()
+
+    def adjust_zoom(self, factor):
+        """Увеличение/уменьшение по кнопке."""
+        # Для кнопок и горячих клавиш используем центр Canvas как точку масштабирования
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+
+        canvas_x, canvas_y = w / 2, h / 2
+
+        world_x_before, world_y_before = self.canvas_to_world(canvas_x, canvas_y)
+        self.scale *= factor
+        world_x_after, world_y_after = self.canvas_to_world(canvas_x, canvas_y)
+
+        self.offset_x -= (world_x_after - world_x_before)
+        self.offset_y -= (world_y_after - world_y_before)
+
+        self.draw_scene()
+
+    def zoom_in_key(self, e):
+        """Горячая клавиша для увеличения."""
+        self.adjust_zoom(1.1)
+
+    def zoom_out_key(self, e):
+        """Горячая клавиша для уменьшения."""
+        self.adjust_zoom(0.9)
+
+    def zoom_extents(self):
+        """Показывает весь чертеж (Zoom Extents)."""
+        if not self.scene.segments:
+            # Если нет отрезков, сброс к стандартному виду (1:1)
+            self.offset_x = 0
+            self.offset_y = 0
+            self.scale = 1.0
+            self.draw_scene()
+            return
+
+        # 1. Находим границы чертежа (Bounding Box)
+        min_x, max_x, min_y, max_y = float('inf'), float('-inf'), float('inf'), float('-inf')
+
+        for s in self.scene.segments:
+            min_x = min(min_x, s.x1, s.x2)
+            max_x = max(max_x, s.x1, s.x2)
+            min_y = min(min_y, s.y1, s.y2)
+            max_y = max(max_y, s.y1, s.y2)
+
+        # 2. Добавляем небольшой запас (Padding)
+        padding_factor = 1.1
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        range_x = (max_x - min_x) * padding_factor
+        range_y = (max_y - min_y) * padding_factor
+
+        # 3. Определяем размеры Canvas
+        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+
+        # 4. Вычисляем требуемый масштаб
+        if range_x == 0 and range_y == 0:
+            # Случай одной точки (сброс к 1:1)
+            self.offset_x = center_x
+            self.offset_y = center_y
+            self.scale = 1.0
+        else:
+            # Выбираем минимальный масштаб, который вместит по X или Y
+            scale_x = w / range_x if range_x > 0 else float('inf')
+            scale_y = h / range_y if range_y > 0 else float('inf')
+
+            self.scale = min(scale_x, scale_y)
+            self.offset_x = center_x
+            self.offset_y = center_y
+
         self.draw_scene()
 
     ## ---------- Рисование ----------
@@ -299,7 +367,6 @@ class SceneCADApp:
         c = self.canvas
         w, h = c.winfo_width(), c.winfo_height()
         step = self.adaptive_axis_step()
-        # Вычисление границ мира в текущем окне
         start_x = self.offset_x - (w / 2) / self.scale
         end_x = self.offset_x + (w / 2) / self.scale
         start_y = self.offset_y - (h / 2) / self.scale
@@ -349,7 +416,6 @@ class SceneCADApp:
     def adaptive_axis_step(self):
         """Определяет шаг сетки в зависимости от текущего масштаба."""
         for s in [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]:
-            # Шаг, который дает ~40 пикселей между линиями
             if s * self.scale > 40:
                 return s
         return 1000
@@ -358,18 +424,14 @@ class SceneCADApp:
     def world_to_canvas(self, x, y):
         """Преобразует координаты мира в координаты Canvas."""
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        # Смещение на центр Canvas, учет масштаба и сдвига offset
         cx = w / 2 + (x - self.offset_x) * self.scale
-        # Ось Y инвертирована в Tkinter (нулевая координата сверху)
         cy = h / 2 - (y - self.offset_y) * self.scale
         return cx, cy
 
     def canvas_to_world(self, cx, cy):
         """Преобразует координаты Canvas в координаты мира."""
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        # Обратное преобразование X
         x = (cx - w / 2) / self.scale + self.offset_x
-        # Обратное преобразование Y
         y = (h / 2 - cy) / self.scale + self.offset_y
         return x, y
 
@@ -404,8 +466,7 @@ class SceneCADApp:
         c = colorchooser.askcolor()[1]
         if c:
             self.segment_color = c
-            self.draw_scene()  # Перерисовка для применения цвета к новым отрезкам
-            self.update_tool_buttons()  # Обновление цвета кнопки, если нужно
+            self.draw_scene()
 
     def choose_bg_color(self):
         c = colorchooser.askcolor()[1]
@@ -416,5 +477,29 @@ class SceneCADApp:
 
     def update_info(self):
         self.info.delete(1.0, tk.END)
-        # Предполагается, что у self.scene есть метод describe
         self.info.insert(tk.END, self.scene.describe(self.angle_unit.get() == "degrees"))
+
+
+if __name__ == "__main__":
+    # --- Заглушка для демонстрации, если core.scene не существует ---
+    try:
+        from core.scene import Scene
+    except ImportError:
+        print("Внимание: Файл 'core/scene.py' не найден. Используется заглушка класса Scene.")
+
+
+        class Segment:
+            def __init__(self, x1, y1, x2, y2, color):
+                self.x1, self.y1, self.x2, self.y2, self.color = x1, y1, x2, y2, color
+
+
+        class Scene:
+            def __init__(self): self.segments = []
+
+            def add_segment(self, x1, y1, x2, y2, color): self.segments.append(Segment(x1, y1, x2, y2, color))
+
+            def add_segment_polar(self, x1, y1, r, t, color, is_deg): pass
+
+            def clear(self): self.segments = []
+
+            def describe(self, is_deg): return f"Всего отрезков: {len(self.segments)}\n(Используется заглушка Scene)"
