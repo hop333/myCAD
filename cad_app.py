@@ -6,6 +6,7 @@ from math import degrees, radians, cos, sin
 from core.scene import Scene
 from core.segment import distance_point_to_segment
 from core.view_transforms import ViewTransform
+from core.style_manager import StyleManager
 from cad_view import CADView
 from cad_ui import CADUI
 
@@ -13,38 +14,43 @@ from cad_ui import CADUI
 class SceneCADApp(CADUI):
     def __init__(self, root):
         self.root = root
-        self.root.title("MiniCAD")
+        self.root.title("MiniCAD - Стили по ГОСТ")
         self.root.geometry("1200x700")
         self.root.configure(bg="#1e1e1e")
 
         self.FALLBACK_W = 760
         self.FALLBACK_H = 630
 
-        self.scene = Scene()
+        # 1. Инициализация менеджера стилей и сцены
+        self.style_manager = StyleManager()
+        self.scene = Scene(self.style_manager)
 
-        # Глобальные переменные для состояния (используются в CADUI через self.app)
+        # Глобальные переменные для состояния
         self.angle_unit = tk.StringVar(value="degrees")
         self.tool = tk.StringVar(value="segment")
         self.snap_enabled = tk.BooleanVar(value=False)
-        self.segment_color = "#66ccff"
+        self.segment_color = self.style_manager.get_style(self.style_manager.current_style_name).color
+
         self.temp_point = None
         self.drag_start = None
         self.last_mouse_world = (0, 0)
 
-        # Ссылки на виджеты, которые будут созданы в CADUI
+        # Ссылки на виджеты (будут заполнены в CADUI.__init__)
         self.canvas = None
         self.status_bar = None
         self.info_text = None
         self.tool_buttons = {}
+        self.current_style_var = None
+        self.style_combobox = None
 
-        # 1. Настройка UI (через наследованный класс)
-        CADUI.__init__(self, root, self)  # Передаем self как app_ref
+        # 2. Настройка UI (через наследованный класс)
+        CADUI.__init__(self, root, self)
 
-        # 2. Инициализация View и Transform (зависит от self.canvas)
+        # 3. Инициализация View и Transform
         self.trans = ViewTransform(self.canvas, self.scene)
-        self.view = CADView(self.canvas, self.trans, self.scene)
+        self.view = CADView(self.canvas, self.trans, self.scene, self.style_manager)
 
-        # 3. Биндинг событий
+        # 4. Биндинг событий
         self._bind_events()
         self.view.draw_all()
         self.update_status_bar()
@@ -81,9 +87,7 @@ class SceneCADApp(CADUI):
         self.root.bind("<Shift-R>", lambda e: self.rotate_view(-90))
 
     def show_context_menu(self, e):
-        # ... (Ваш оригинальный код show_context_menu)
         menu = tk.Menu(self.root, tearoff=0, bg="#2b2b2b", fg="white")
-
         menu.add_command(label="Показать все", command=self.zoom_extents)
         menu.add_separator()
         menu.add_command(label="Увеличить", command=self.zoom_in)
@@ -99,11 +103,10 @@ class SceneCADApp(CADUI):
             menu.grab_release()
 
     def open_add_segment_dialog(self):
-        # ... (Ваш оригинальный код open_add_segment_dialog)
+        """Диалог для добавления отрезка по координатам/длине/углу."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Добавить отрезок")
 
-        # --- Центрирование окна ---
         window_width = 340
         window_height = 330
         parent_x = self.root.winfo_rootx()
@@ -113,7 +116,6 @@ class SceneCADApp(CADUI):
         center_x = parent_x + (parent_width // 2) - (window_width // 2)
         center_y = parent_y + (parent_height // 2) - (window_height // 2)
         dialog.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
-        # --------------------------
 
         dialog.configure(bg="#2b2b2b")
         dialog.resizable(False, False)
@@ -143,6 +145,12 @@ class SceneCADApp(CADUI):
                 labels_refs["l3"].config(text="Длина:")
                 labels_refs["l4"].config(text=f"Угол ({unit_label}):")
                 frame_units.pack(after=frame_mode, pady=5)
+
+            # Выбор стиля
+            style_label = tk.Label(dialog, text=f"Текущий стиль: {self.style_manager.current_style_name}",
+                                   bg="#2b2b2b", fg="#cccccc")
+            style_label.pack_forget()
+            style_label.pack(pady=5)
 
         tk.Radiobutton(frame_mode, text="2 Точки (X,Y)", variable=input_mode, value="cartesian",
                        command=update_ui_state, bg="#2b2b2b", fg="#cccccc", selectcolor="#4477aa",
@@ -193,6 +201,7 @@ class SceneCADApp(CADUI):
                 v4 = float(entries["v4"].get())
 
                 x1, y1, x2, y2 = 0, 0, 0, 0
+                current_style = self.style_manager.current_style_name
 
                 if input_mode.get() == "cartesian":
                     x1, y1, x2, y2 = v1, v2, v3, v4
@@ -203,14 +212,10 @@ class SceneCADApp(CADUI):
                     if angle_unit_local.get() == "degrees":
                         angle = radians(angle)
 
-                    # NOTE: y2 = y1 + length * sin(angle)
-                    # В CAD/графике ось Y часто инвертирована, но в вашей модели
-                    # Scene и ViewTransform она ведет себя как математическая
-                    # (отсчет вверх), поэтому используем стандартные формулы.
                     x2 = x1 + length * cos(angle)
                     y2 = y1 + length * sin(angle)
 
-                self.scene.add_segment(x1, y1, x2, y2, self.segment_color)
+                self.scene.add_segment(x1, y1, x2, y2, current_style)
                 self.view.draw_all()
                 self.update_info()
                 self.zoom_extents()
@@ -261,8 +266,13 @@ class SceneCADApp(CADUI):
     # --- Методы Состояния ---
 
     def choose_segment_color(self):
-        color_code = colorchooser.askcolor(title="Выберите цвет фигуры")[1]
-        if color_code: self.segment_color = color_code
+        """Изменяет цвет для текущего выбранного стиля."""
+        color_code = colorchooser.askcolor(title="Выберите цвет для текущего стиля")[1]
+        if color_code:
+            style_name = self.style_manager.current_style_name
+            self.style_manager.update_style(style_name, color=color_code)
+            self.segment_color = color_code
+            self.view.draw_all()
 
     def choose_bg_color(self):
         color_code = colorchooser.askcolor(title="Выберите цвет фона")[1]
@@ -302,7 +312,6 @@ class SceneCADApp(CADUI):
     def cancel_operation(self, e=None):
         self.temp_point = None
         self.view.clear_preview()
-        # Возвращаемся к инструменту "Отрезок" после отмены
         self.set_tool("segment")
 
     def update_status_bar(self):
@@ -330,19 +339,20 @@ class SceneCADApp(CADUI):
     def on_mouse_down(self, e):
         self.canvas.focus_set()
         wx, wy = self.get_world_coords(e)
+        current_style = self.style_manager.current_style_name
 
         if self.tool.get() == "segment":
             if not self.temp_point:
                 self.temp_point = (wx, wy)
             else:
-                self.scene.add_segment(self.temp_point[0], self.temp_point[1], wx, wy, self.segment_color)
+                self.scene.add_segment(self.temp_point[0], self.temp_point[1], wx, wy, current_style)
                 self.temp_point = None
                 self.view.clear_preview()
                 self.view.draw_all()
                 self.update_info()
 
         elif self.tool.get() == "delete":
-            tolerance = 8 / self.trans.scale  # Допуск в мировых координатах
+            tolerance = 8 / self.trans.scale
             for i in range(len(self.scene.segments) - 1, -1, -1):
                 s = self.scene.segments[i]
                 if distance_point_to_segment(wx, wy, s.x1, s.y1, s.x2, s.y2) < tolerance:
@@ -362,7 +372,7 @@ class SceneCADApp(CADUI):
         self.canvas.config(cursor="" if self.tool.get() != "pan" else "fleur")
 
         if self.tool.get() == "segment" and self.temp_point:
-            self.view.draw_preview(self.temp_point, (wx, wy), self.segment_color)
+            self.view.draw_preview(self.temp_point, (wx, wy), self.style_manager.current_style_name)
 
     def on_mouse_drag(self, e):
         if self.tool.get() == "pan":

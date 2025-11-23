@@ -58,37 +58,29 @@ class ViewTransform:
 
     def pan(self, dx_c, dy_c):
         """Перемещает (панорамирует) вид на основе смещения холста."""
-        # Переводим смещение на холсте в мировые координаты, учитывая масштаб и поворот
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
 
-        # Получаем мировые координаты центра до и после смещения
         wx_old, wy_old = self.canvas_to_world(w / 2, h / 2)
         wx_new, wy_new = self.canvas_to_world(w / 2 - dx_c, h / 2 - dy_c)
 
-        # Разница между новыми и старыми координатами и есть смещение offset_x/y
         self.offset_x += wx_new - wx_old
         self.offset_y += wy_new - wy_old
 
     def zoom_at_point(self, factor, cx, cy):
         """Увеличивает/уменьшает масштаб, центрируя вокруг точки холста (cx, cy)."""
-        # 1. Находим мировые координаты точки, вокруг которой нужно масштабировать
         wx, wy = self.canvas_to_world(cx, cy)
 
-        # 2. Изменяем масштаб
         self.scale *= factor
-        if self.scale < 0.1: self.scale = 0.1  # Минимальный масштаб
+        if self.scale < 0.1: self.scale = 0.1
 
-        # 3. Пересчитываем мировые координаты той же точки на холсте с новым масштабом
         wx_new, wy_new = self.canvas_to_world(cx, cy)
 
-        # 4. Смещаем offset так, чтобы точка wx, wy осталась на cx, cy
         self.offset_x -= (wx_new - wx)
         self.offset_y -= (wy_new - wy)
 
     def zoom_extents(self):
         """Масштабирует вид так, чтобы все объекты сцены были видны."""
         if not self.scene.segments:
-            # Сброс к стандартному виду, если объектов нет
             self.offset_x, self.offset_y = 0.0, 0.0
             self.scale = self.BASE_SCALE
             return
@@ -96,13 +88,6 @@ class ViewTransform:
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
         if w <= 1 or h <= 1: return
 
-        # Определяем минимальный/максимальный x/y сцены
-        min_x = min(s.x1 for s in self.scene.segments)
-        max_x = max(s.x2 for s in self.scene.segments)
-        min_y = min(s.y1 for s in self.scene.segments)
-        max_y = max(s.y2 for s in self.scene.segments)
-
-        # Добавляем все точки (x1,y1) и (x2,y2)
         all_x = [s.x1 for s in self.scene.segments] + [s.x2 for s in self.scene.segments]
         all_y = [s.y1 for s in self.scene.segments] + [s.y2 for s in self.scene.segments]
 
@@ -111,37 +96,30 @@ class ViewTransform:
         min_x, max_x = min(all_x), max(all_x)
         min_y, max_y = min(all_y), max(all_y)
 
-        # Добавляем небольшой отступ
         buffer = 5.0
         min_x -= buffer
         max_x += buffer
         min_y -= buffer
         max_y += buffer
 
-        # Центр сцены
         center_x = (min_x + max_x) / 2.0
         center_y = (min_y + max_y) / 2.0
 
-        # Размеры сцены
         scene_width = max_x - min_x
         scene_height = max_y - min_y
 
-        # Вычисляем требуемый масштаб
         scale_x = w / scene_width if scene_width > 0 else self.BASE_SCALE
         scale_y = h / scene_height if scene_height > 0 else self.BASE_SCALE
 
-        # Используем минимальный масштаб, чтобы все поместилось
-        new_scale = min(scale_x, scale_y) * 0.9  # Множитель для небольшого запаса
-        if new_scale < 0.1: new_scale = self.BASE_SCALE  # Защита от деления на 0 или слишком маленьких значений
+        new_scale = min(scale_x, scale_y) * 0.9
+        if new_scale < 0.1: new_scale = self.BASE_SCALE
 
         self.scale = new_scale
 
-        # Устанавливаем смещение, чтобы центр сцены совпадал с центром холста
         self.offset_x = center_x
         self.offset_y = center_y
 
     def rotate_view(self, angle_deg):
         """Поворачивает вид на заданный угол (в градусах)."""
         self.rotation_angle += radians(angle_deg)
-        # Нормализация угла (не строго обязательно, но полезно)
         self.rotation_angle %= (2 * radians(360))

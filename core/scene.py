@@ -2,11 +2,15 @@ from .segment import Segment
 
 class Scene:
     """Класс для управления коллекцией геометрических объектов (отрезков)."""
-    def __init__(self):
+    def __init__(self, style_manager):
         self.segments = []
+        self.style_manager = style_manager # Ссылка на менеджер стилей
 
-    def add_segment(self, x1, y1, x2, y2, color):
-        self.segments.append(Segment(x1, y1, x2, y2, color))
+    def add_segment(self, x1, y1, x2, y2, style_name):
+        style = self.style_manager.get_style(style_name)
+        if style:
+            # Передаем имя стиля и цвет из стиля
+            self.segments.append(Segment(x1, y1, x2, y2, style_name, style.color))
 
     def clear(self):
         """Очищает сцену от всех объектов."""

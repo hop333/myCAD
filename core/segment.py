@@ -1,12 +1,20 @@
-from math import sqrt, atan2, degrees
+# core/segment.py (ОБНОВЛЕННЫЙ)
 
+from math import sqrt, atan2, degrees
+# Импорт менеджера стилей для доступа к текущим данным
+# Здесь мы не будем импортировать StyleManager, чтобы избежать циклической зависимости.
+# Вместо этого Segment будет работать с именем стиля и цветом,
+# а LineStyle/StyleManager будут использоваться в SceneCADApp для получения данных.
 
 class Segment:
-    """Класс для хранения геометрического отрезка и связанных с ним свойств."""
-    def __init__(self, x1, y1, x2, y2, color):
+    """
+    Класс для хранения геометрического отрезка. Теперь хранит имя стиля линии.
+    """
+    def __init__(self, x1, y1, x2, y2, style_name, color):
         self.x1, self.y1 = x1, y1
         self.x2, self.y2 = x2, y2
-        self.color = color
+        self.style_name = style_name # Имя стиля, а не цвет
+        self.color = color # Пока оставим цвет, чтобы не усложнять. В идеале цвет должен быть в LineStyle
 
     def length(self):
         """Вычисляет длину отрезка."""
@@ -14,7 +22,6 @@ class Segment:
 
     def angle(self, as_degrees=True):
         """Вычисляет угол отрезка относительно оси X."""
-        # Угол в радианах от горизонтальной оси X
         angle = atan2(self.y2 - self.y1, self.x2 - self.x1)
         return degrees(angle) if as_degrees else angle
 
@@ -28,7 +35,7 @@ class Segment:
                 f"Конец: ({self.x2:.2f}, {self.y2:.2f})\n"
                 f"Длина: {length:.2f}\n"
                 f"Угол: {angle:.2f} {unit}\n"
-                f"Цвет: {self.color}")
+                f"Стиль: {self.style_name}")
         return desc
 
 
@@ -36,13 +43,10 @@ def distance_point_to_segment(px, py, x1, y1, x2, y2):
     """Вычисляет кратчайшее расстояние от точки до отрезка."""
     dx, dy = x2 - x1, y2 - y1
     seg_len_sq = dx * dx + dy * dy
-
     if seg_len_sq == 0.0:
         return sqrt((px - x1) ** 2 + (py - y1) ** 2)
 
     t = ((px - x1) * dx + (py - y1) * dy) / seg_len_sq
-
-    # Находим ближайшую точку на отрезке
     if t < 0.0:
         closest_x, closest_y = x1, y1
     elif t > 1.0:

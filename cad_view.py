@@ -1,20 +1,22 @@
 import tkinter as tk
 from math import floor, ceil
 
-# Относительные импорты из папки core
 from core.view_transforms import ViewTransform
 from core.scene import Scene
+from core.style_manager import StyleManager
 
 
 class CADView:
 
-    def __init__(self, canvas_ref: tk.Canvas, transform_ref: ViewTransform, scene_ref: Scene):
+    def __init__(self, canvas_ref: tk.Canvas, transform_ref: ViewTransform, scene_ref: Scene,
+                 style_manager_ref: StyleManager):
         self.canvas = canvas_ref
         self.trans = transform_ref
         self.scene = scene_ref
+        self.style_manager = style_manager_ref
         self.bg_color = "#121212"
         self.grid_color = "#333333"
-        self.set_bg_color(self.bg_color) # Устанавливаем цвет фона сразу
+        self.set_bg_color(self.bg_color)
 
     def set_bg_color(self, color):
         """Устанавливает цвет фона холста."""
@@ -30,11 +32,28 @@ class CADView:
         self.draw_segments()
 
     def draw_segments(self):
-        """Рисует отрезки из сцены."""
+        """Рисует отрезки из сцены, используя данные LineStyle."""
+        # Коэффициент перевода мм в пиксели (для толщины линии)
+        MM_TO_PIXEL = 3.7795  # ~96 DPI
+
         for s in self.scene.segments:
+            style = self.style_manager.get_style(s.style_name)
+            if not style: continue
+
             p1 = self.trans.world_to_canvas(s.x1, s.y1)
             p2 = self.trans.world_to_canvas(s.x2, s.y2)
-            self.canvas.create_line(p1, p2, fill=s.color, width=3, smooth=True, tags="segment")
+
+            # Толщина линии в пикселях (независима от масштаба вида)
+            line_width = style.thickness_mm * MM_TO_PIXEL
+
+            # Шаблон штриховки (визуально постоянный на экране)
+            dash_pattern = style.get_tk_dash_pattern(self.trans.scale)
+
+            self.canvas.create_line(p1, p2,
+                                    fill=s.color,
+                                    width=line_width,
+                                    dash=dash_pattern,
+                                    tags="segment")
 
     def draw_grid(self):
         """Рисует сетку."""
@@ -91,12 +110,26 @@ class CADView:
             if -20 < cx < w + 20 and -20 < cy < h + 20:
                 self.canvas.create_text(cx - 25, cy, text=fmt(y * step), fill="#888", font=("Arial", 8), anchor="e")
 
-    def draw_preview(self, w1, w2, color):
-        """Рисует предварительный (пунктирный) отрезок."""
+    def draw_preview(self, w1, w2, style_name):
+        """Рисует предварительный (пунктирный) отрезок с учетом стиля."""
+        style = self.style_manager.get_style(style_name)
+        if not style: return
+
+        MM_TO_PIXEL = 3.7795
+        line_width = style.thickness_mm * MM_TO_PIXEL
+
         p1 = self.trans.world_to_canvas(*w1)
         p2 = self.trans.world_to_canvas(*w2)
+
+        # Для предпросмотра используем тонкую пунктирную линию
+        dash_pattern = (8, 4)
+
         self.canvas.delete("preview")
-        self.canvas.create_line(p1, p2, fill=color, width=3, dash=(8, 4), tags="preview")
+        self.canvas.create_line(p1, p2,
+                                fill=style.color,
+                                width=line_width,
+                                dash=dash_pattern,
+                                tags="preview")
 
     def clear_preview(self):
         """Удаляет предварительный отрезок."""
