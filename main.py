@@ -1,5 +1,3 @@
-# main.py
-
 import tkinter as tk
 from cad_app import SceneCADApp
 

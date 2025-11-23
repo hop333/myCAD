@@ -1,174 +1,73 @@
-# cad_app.py
-
 import tkinter as tk
-from tkinter import simpledialog, colorchooser, messagebox
-from math import degrees
-from geometry_core import Scene, distance_point_to_segment
-from view_transforms import ViewTransform
+from tkinter import colorchooser, messagebox
+from math import degrees, radians, cos, sin
+
+# Импорты из разделенных файлов
+from core.scene import Scene
+from core.segment import distance_point_to_segment
+from core.view_transforms import ViewTransform
 from cad_view import CADView
+from cad_ui import CADUI
 
 
-class SceneCADApp:
+class SceneCADApp(CADUI):
     def __init__(self, root):
         self.root = root
         self.root.title("MiniCAD")
         self.root.geometry("1200x700")
         self.root.configure(bg="#1e1e1e")
 
-        # МОДЕЛЬ/ЯДРО
+        self.FALLBACK_W = 760
+        self.FALLBACK_H = 630
+
         self.scene = Scene()
 
-        # Настройки
-        self.coord_system = tk.StringVar(value="cartesian")
+        # Глобальные переменные для состояния (используются в CADUI через self.app)
         self.angle_unit = tk.StringVar(value="degrees")
         self.tool = tk.StringVar(value="segment")
         self.snap_enabled = tk.BooleanVar(value=False)
         self.segment_color = "#66ccff"
-
-        # Состояние
         self.temp_point = None
         self.drag_start = None
         self.last_mouse_world = (0, 0)
 
-        # --- НАСТРОЙКА UI ---
-        self._setup_ui()
+        # Ссылки на виджеты, которые будут созданы в CADUI
+        self.canvas = None
+        self.status_bar = None
+        self.info_text = None
+        self.tool_buttons = {}
 
-        # ЛОГИКА ВИДА (Привязка к холсту и сцене)
+        # 1. Настройка UI (через наследованный класс)
+        CADUI.__init__(self, root, self)  # Передаем self как app_ref
+
+        # 2. Инициализация View и Transform (зависит от self.canvas)
         self.trans = ViewTransform(self.canvas, self.scene)
-        # ВИЗУАЛИЗАЦИЯ (Привязка к холсту, логике вида и сцене)
         self.view = CADView(self.canvas, self.trans, self.scene)
 
-        # --- ЗАПУСК ---
+        # 3. Биндинг событий
         self._bind_events()
         self.view.draw_all()
         self.update_status_bar()
 
-    # --- МЕТОДЫ UI И КОНТРОЛЛЕРА ---
-    # (методы _create_styled_button и _setup_ui остаются в cad_app.py для управления UI)
-
-    def _create_styled_button(self, parent, text, command, bg="#3a3a3a", fg="white", activebackground="#555555",
-                              font_size=9, **kwargs):
-        """Создает кнопку со стилем."""
-        return tk.Button(parent, text=text, command=command,
-                         bg=bg, fg=fg, activebackground=activebackground, activeforeground="white",
-                         relief="flat", bd=0, highlightthickness=0,
-                         font=("Segoe UI", font_size, "bold"),
-                         padx=12, pady=7, **kwargs)
-
-    def _setup_ui(self):
-        # --- ВЕРХНЯЯ ПАНЕЛЬ (Top Bar) ---
-        top = tk.Frame(self.root, bg="#2b2b2b", height=40, bd=0, relief="flat")
-        top.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-
-        # Радио-кнопки
-        for text, var, val in [("Декартовы", self.coord_system, "cartesian"),
-                               ("Полярные", self.coord_system, "polar"),
-                               ("Градусы (°)", self.angle_unit, "degrees"),
-                               ("Радианы (rad)", self.angle_unit, "radians")]:
-            tk.Radiobutton(top, text=text, variable=var, value=val,
-                           bg="#3a3a3a", fg="#cccccc",
-                           selectcolor="#4477aa",
-                           activebackground="#555555",
-                           activeforeground="white",
-                           font=("Segoe UI", 9, "bold"),
-                           indicatoron=0,
-                           relief="flat", bd=0, highlightthickness=0,
-                           padx=12, pady=7).pack(side=tk.LEFT, padx=3)
-
-        tk.Label(top, text="•", bg="#2b2b2b", fg="#555").pack(side=tk.LEFT, padx=10)
-
-        # Кнопки Управления Видом
-        self._create_styled_button(top, text="Подогнать Вид [Ctrl+0]", command=self.zoom_extents,
-                                   bg="#444444").pack(side=tk.LEFT, padx=3)
-
-        self._create_styled_button(top, text="↺ 15° [L]",
-                                   command=lambda: self.rotate_view(15),
-                                   bg="#444444").pack(side=tk.LEFT, padx=3)
-
-        self._create_styled_button(top, text="↻ 15° [R]",
-                                   command=lambda: self.rotate_view(-15),
-                                   bg="#444444").pack(side=tk.LEFT, padx=3)
-
-        self._create_styled_button(top, text="Сброс Вида", command=self.reset_view).pack(side=tk.LEFT, padx=3)
-
-        # --- СТРОКА СОСТОЯНИЯ (Status Bar) ---
-        self.status_bar = tk.Label(self.root, text="", bd=0, relief=tk.FLAT, anchor=tk.W,
-                                   bg="#3a3a3a", fg="#cccccc", font=("Segoe UI", 9), padx=10, pady=2)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # --- БОКОВАЯ ПАНЕЛЬ (Sidebar) ---
-        sidebar = tk.Frame(self.root, bg="#2b2b2b", width=180, bd=0, relief="flat")
-        sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        sidebar.pack_propagate(False)
-
-        # Кнопки Инструментов
-        self.tool_buttons = {}
-        for tool_name, text, key in [("segment", "✏️ Отрезок [S]", "s"),
-                                     ("pan", "🖐 Панорама [P]", "p"),
-                                     ("delete", "🗑 Удалить Объект [D]", "d")]:
-            btn = self._create_styled_button(sidebar, text=text, command=lambda t=tool_name: self.set_tool(t),
-                                             bg="#3a3a3a", font_size=10, height=1)
-            btn.pack(fill=tk.X, pady=4, padx=8)
-            self.tool_buttons[tool_name] = btn
-        self.update_tool_buttons()
-
-        # Настройки цвета
-        self._create_styled_button(sidebar, text="🎨 Цвет фигуры", command=self.choose_segment_color,
-                                   bg="#444444").pack(fill=tk.X, pady=(15, 4), padx=8)
-        self._create_styled_button(sidebar, text="🌄 Цвет Фона", command=self.choose_bg_color,
-                                   bg="#444444").pack(fill=tk.X, pady=4, padx=8)
-
-        # Привязка к Сетке
-        self.snap_check = tk.Checkbutton(sidebar, text="Привязка к Сетке [G]", variable=self.snap_enabled,
-                                         bg="#2b2b2b", fg="white",
-                                         selectcolor="#4477aa",
-                                         activebackground="#2b2b2b",
-                                         font=("Segoe UI", 10),
-                                         bd=0, highlightthickness=0,
-                                         padx=8, pady=5,
-                                         anchor="w")
-        self.snap_check.pack(fill=tk.X, pady=(10, 5), padx=8)
-
-        # Кнопка Очистки (Красная, акцентная)
-        self._create_styled_button(sidebar, text="ОЧИСТИТЬ ВСЕ [Ctrl+W]", command=self.clear_scene,
-                                   bg="#993333", activebackground="#aa5555", fg="white", font_size=10).pack(fill=tk.X,
-                                                                                                            pady=(10,
-                                                                                                                  20),
-                                                                                                            padx=8)
-
-        # --- ХОЛСТ (Canvas) ---
-        self.canvas = tk.Canvas(self.root, bg="#121212", highlightthickness=0, bd=0)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # --- ПАНЕЛЬ ИНФОРМАЦИИ (Inspector Panel) ---
-        info_frame = tk.Frame(self.root, bg="#252526", width=250, bd=0, relief="flat")
-        info_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        info_frame.pack_propagate(False)
-
-        tk.Label(info_frame, text="ИНСПЕКТОР ОБЪЕКТОВ", bg="#333333", fg="#cccccc", font=("Segoe UI", 9, "bold"),
-                 anchor="w", padx=10, pady=5).pack(fill=tk.X)
-
-        self.info_text = tk.Text(info_frame, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 9),
-                                 bd=0, highlightthickness=0, wrap=tk.WORD, state=tk.DISABLED)
-        self.info_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0), pady=5)
-
-        sb = tk.Scrollbar(info_frame, command=self.info_text.yview, bg="#252526", troughcolor="#1e1e1e", borderwidth=0)
-        sb.pack(side=tk.RIGHT, fill=tk.Y, pady=5)
-        self.info_text.config(yscrollcommand=sb.set)
+    # --- Методы UI и управления состоянием ---
 
     def _bind_events(self):
         self.canvas.bind("<Configure>", lambda e: self.view.draw_all())
         self.canvas.bind("<Button-1>", self.on_mouse_down)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<Motion>", self.on_mouse_move)
+
+        self.canvas.bind("<Button-3>", self.show_context_menu)
+
         self.canvas.bind("<Button-2>", self.start_pan)
         self.canvas.bind("<B2-Motion>", self.pan_drag)
         self.canvas.bind("<ButtonRelease-2>", self.end_pan)
+
         self.canvas.bind("<MouseWheel>", self.on_wheel)
         self.canvas.bind("<Button-4>", lambda e: self.on_wheel(e, 120))
         self.canvas.bind("<Button-5>", lambda e: self.on_wheel(e, -120))
 
-        # Привязка клавиатуры
+        # Хоткеи
         self.root.bind("<Control-0>", lambda e: self.zoom_extents())
         self.root.bind("<Escape>", self.cancel_operation)
         self.root.bind("<Key-s>", lambda e: self.set_tool("segment"))
@@ -181,17 +80,169 @@ class SceneCADApp:
         self.root.bind("<Shift-L>", lambda e: self.rotate_view(90))
         self.root.bind("<Shift-R>", lambda e: self.rotate_view(-90))
 
-    # --- ЛОГИКА ИНСТРУМЕНТОВ/ОПЕРАЦИЙ ---
+    def show_context_menu(self, e):
+        # ... (Ваш оригинальный код show_context_menu)
+        menu = tk.Menu(self.root, tearoff=0, bg="#2b2b2b", fg="white")
 
-    def choose_segment_color(self):
-        color_code = colorchooser.askcolor(title="Выберите цвет фигуры")[1]
-        if color_code: self.segment_color = color_code
+        menu.add_command(label="Показать все", command=self.zoom_extents)
+        menu.add_separator()
+        menu.add_command(label="Увеличить", command=self.zoom_in)
+        menu.add_command(label="Уменьшить", command=self.zoom_out)
+        menu.add_command(label="Панорамирование (P)", command=lambda: self.set_tool("pan"))
+        menu.add_separator()
+        menu.add_command(label="Повернуть вид ↺", command=lambda: self.rotate_view(15))
+        menu.add_command(label="Сбросить вид", command=self.reset_view)
 
-    def choose_bg_color(self):
-        color_code = colorchooser.askcolor(title="Выберите цвет фона")[1]
-        if color_code:
-            self.view.set_bg_color(color_code)
-            self.view.draw_all()
+        try:
+            menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            menu.grab_release()
+
+    def open_add_segment_dialog(self):
+        # ... (Ваш оригинальный код open_add_segment_dialog)
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Добавить отрезок")
+
+        # --- Центрирование окна ---
+        window_width = 340
+        window_height = 330
+        parent_x = self.root.winfo_rootx()
+        parent_y = self.root.winfo_rooty()
+        parent_width = self.root.winfo_width()
+        parent_height = self.root.winfo_height()
+        center_x = parent_x + (parent_width // 2) - (window_width // 2)
+        center_y = parent_y + (parent_height // 2) - (window_height // 2)
+        dialog.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
+        # --------------------------
+
+        dialog.configure(bg="#2b2b2b")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        input_mode = tk.StringVar(value="cartesian")
+        angle_unit_local = tk.StringVar(value="degrees")
+
+        frame_mode = tk.Frame(dialog, bg="#2b2b2b")
+        frame_mode.pack(pady=(15, 5))
+
+        frame_units = tk.Frame(dialog, bg="#2b2b2b")
+        labels_refs = {}
+
+        def update_ui_state():
+            if input_mode.get() == "cartesian":
+                labels_refs["l1"].config(text="X1:")
+                labels_refs["l2"].config(text="Y1:")
+                labels_refs["l3"].config(text="X2:")
+                labels_refs["l4"].config(text="Y2:")
+                frame_units.pack_forget()
+            else:
+                unit_label = "°" if angle_unit_local.get() == "degrees" else "rad"
+                labels_refs["l1"].config(text="Старт X:")
+                labels_refs["l2"].config(text="Старт Y:")
+                labels_refs["l3"].config(text="Длина:")
+                labels_refs["l4"].config(text=f"Угол ({unit_label}):")
+                frame_units.pack(after=frame_mode, pady=5)
+
+        tk.Radiobutton(frame_mode, text="2 Точки (X,Y)", variable=input_mode, value="cartesian",
+                       command=update_ui_state, bg="#2b2b2b", fg="#cccccc", selectcolor="#4477aa",
+                       activebackground="#2b2b2b", activeforeground="white", font=("Segoe UI", 9, "bold")).pack(
+            side=tk.LEFT, padx=10)
+
+        tk.Radiobutton(frame_mode, text="Длина / Угол", variable=input_mode, value="length_angle",
+                       command=update_ui_state, bg="#2b2b2b", fg="#cccccc", selectcolor="#4477aa",
+                       activebackground="#2b2b2b", activeforeground="white", font=("Segoe UI", 9, "bold")).pack(
+            side=tk.LEFT, padx=10)
+
+        tk.Label(frame_units, text="Угол в:", bg="#2b2b2b", fg="#888888", font=("Segoe UI", 8)).pack(side=tk.LEFT,
+                                                                                                     padx=5)
+        tk.Radiobutton(frame_units, text="Градусах", variable=angle_unit_local, value="degrees",
+                       command=update_ui_state, bg="#2b2b2b", fg="#cccccc", selectcolor="#555555",
+                       activebackground="#2b2b2b", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Radiobutton(frame_units, text="Радианах", variable=angle_unit_local, value="radians",
+                       command=update_ui_state, bg="#2b2b2b", fg="#cccccc", selectcolor="#555555",
+                       activebackground="#2b2b2b", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+        frame_inputs = tk.Frame(dialog, bg="#2b2b2b")
+        frame_inputs.pack(pady=10, padx=20)
+
+        entry_style = {"bg": "#3a3a3a", "fg": "white", "font": ("Consolas", 10), "relief": "flat",
+                       "insertbackground": "white"}
+        label_style = {"bg": "#2b2b2b", "fg": "#cccccc", "font": ("Segoe UI", 10)}
+
+        entries = {}
+        field_ids = ["v1", "v2", "v3", "v4"]
+
+        for i, fid in enumerate(field_ids):
+            lbl = tk.Label(frame_inputs, text="", **label_style)
+            lbl.grid(row=i, column=0, padx=5, pady=5, sticky="e")
+            labels_refs[f"l{i + 1}"] = lbl
+
+            ent = tk.Entry(frame_inputs, width=15, **entry_style)
+            ent.grid(row=i, column=1, padx=5, pady=5)
+            entries[fid] = ent
+            if i == 0: ent.focus_set()
+
+        update_ui_state()
+
+        def on_confirm():
+            try:
+                v1 = float(entries["v1"].get())
+                v2 = float(entries["v2"].get())
+                v3 = float(entries["v3"].get())
+                v4 = float(entries["v4"].get())
+
+                x1, y1, x2, y2 = 0, 0, 0, 0
+
+                if input_mode.get() == "cartesian":
+                    x1, y1, x2, y2 = v1, v2, v3, v4
+                else:
+                    x1, y1 = v1, v2
+                    length = v3
+                    angle = v4
+                    if angle_unit_local.get() == "degrees":
+                        angle = radians(angle)
+
+                    # NOTE: y2 = y1 + length * sin(angle)
+                    # В CAD/графике ось Y часто инвертирована, но в вашей модели
+                    # Scene и ViewTransform она ведет себя как математическая
+                    # (отсчет вверх), поэтому используем стандартные формулы.
+                    x2 = x1 + length * cos(angle)
+                    y2 = y1 + length * sin(angle)
+
+                self.scene.add_segment(x1, y1, x2, y2, self.segment_color)
+                self.view.draw_all()
+                self.update_info()
+                self.zoom_extents()
+                dialog.destroy()
+
+            except ValueError:
+                messagebox.showerror("Ошибка", "Введите корректные числа!", parent=dialog)
+
+        self._create_styled_button(dialog, text="Добавить", command=on_confirm, bg="#4477aa").pack(pady=15)
+        dialog.bind('<Return>', lambda e: on_confirm())
+
+    # --- Методы View/Zoom ---
+
+    def _get_reliable_center(self):
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            w = self.FALLBACK_W
+            h = self.FALLBACK_H
+        return w / 2, h / 2
+
+    def zoom_in(self):
+        cx, cy = self._get_reliable_center()
+        self.trans.zoom_at_point(1.2, cx, cy)
+        self.view.draw_all()
+        self.update_status_bar()
+
+    def zoom_out(self):
+        cx, cy = self._get_reliable_center()
+        self.trans.zoom_at_point(0.8, cx, cy)
+        self.view.draw_all()
+        self.update_status_bar()
 
     def zoom_extents(self):
         self.trans.zoom_extents()
@@ -206,6 +257,18 @@ class SceneCADApp:
     def reset_view(self):
         self.trans.rotation_angle = 0
         self.zoom_extents()
+
+    # --- Методы Состояния ---
+
+    def choose_segment_color(self):
+        color_code = colorchooser.askcolor(title="Выберите цвет фигуры")[1]
+        if color_code: self.segment_color = color_code
+
+    def choose_bg_color(self):
+        color_code = colorchooser.askcolor(title="Выберите цвет фона")[1]
+        if color_code:
+            self.view.set_bg_color(color_code)
+            self.view.draw_all()
 
     def set_tool(self, t):
         self.tool.set(t)
@@ -230,20 +293,34 @@ class SceneCADApp:
         self.info_text.insert(tk.END, self.scene.describe(self.angle_unit.get() == "degrees"))
         self.info_text.config(state=tk.DISABLED)
 
-    def clear_scene(self):
+    def clear_scene(self, e=None):
         if messagebox.askyesno("Подтверждение", "Очистить все объекты на сцене? (Ctrl+W)"):
             self.scene.clear()
             self.view.draw_all()
+            self.update_info()
 
-    def cancel_operation(self, e):
+    def cancel_operation(self, e=None):
         self.temp_point = None
         self.view.clear_preview()
+        # Возвращаемся к инструменту "Отрезок" после отмены
         self.set_tool("segment")
 
-    # --- ОБРАБОТКА ВВОДА ---
+    def update_status_bar(self):
+        wx, wy = self.last_mouse_world
+        scale_pct = int((self.trans.scale / self.trans.BASE_SCALE) * 100)
+        angle_deg = degrees(self.trans.rotation_angle) % 360
+        tools = {'segment': 'Отрезок', 'pan': 'Панорама', 'delete': 'Удаление'}
+        active_tool = tools.get(self.tool.get(), self.tool.get())
+
+        status_text = (f"Курсор (X, Y): {wx:.2f}, {wy:.2f}    |    "
+                       f"Масштаб: {scale_pct}%    |    "
+                       f"Поворот Вида: {angle_deg:.1f}°    |    "
+                       f"Активный Инструмент: {active_tool}")
+        self.status_bar.config(text=status_text)
+
+    # --- Методы Обработки Мыши ---
 
     def get_world_coords(self, e):
-        """Получает мировые координаты, применяя привязку, если включена."""
         wx, wy = self.trans.canvas_to_world(e.x, e.y)
         if self.snap_enabled.get():
             s = self.trans.grid_step()
@@ -262,28 +339,34 @@ class SceneCADApp:
                 self.temp_point = None
                 self.view.clear_preview()
                 self.view.draw_all()
-                self.update_info()  # Обновляем инспектор
+                self.update_info()
 
         elif self.tool.get() == "delete":
+            tolerance = 8 / self.trans.scale  # Допуск в мировых координатах
             for i in range(len(self.scene.segments) - 1, -1, -1):
                 s = self.scene.segments[i]
-                if distance_point_to_segment(wx, wy, s.x1, s.y1, s.x2, s.y2) < 8 / self.trans.scale:
+                if distance_point_to_segment(wx, wy, s.x1, s.y1, s.x2, s.y2) < tolerance:
                     del self.scene.segments[i]
                     self.view.draw_all()
                     self.update_info()
                     break
 
+        elif self.tool.get() == "pan":
+            self.drag_start = (e.x, e.y)
+            self.canvas.config(cursor="fleur")
+
     def on_mouse_move(self, e):
         wx, wy = self.get_world_coords(e)
         self.last_mouse_world = (wx, wy)
         self.update_status_bar()
-        self.canvas.config(cursor="" if self.tool.get() != "pan" else "fleur")  # Обновляем курсор
+        self.canvas.config(cursor="" if self.tool.get() != "pan" else "fleur")
 
         if self.tool.get() == "segment" and self.temp_point:
             self.view.draw_preview(self.temp_point, (wx, wy), self.segment_color)
 
     def on_mouse_drag(self, e):
-        if self.tool.get() == "pan": self.pan_drag(e)
+        if self.tool.get() == "pan":
+            self.pan_drag(e)
 
     def start_pan(self, e):
         self.drag_start = (e.x, e.y)
@@ -292,13 +375,14 @@ class SceneCADApp:
     def pan_drag(self, e):
         if not self.drag_start: return
         dx, dy = e.x - self.drag_start[0], e.y - self.drag_start[1]
-        self.trans.pan(-dx, -dy)  # Инвертируем смещение
+        self.trans.pan(dx, dy)
         self.drag_start = (e.x, e.y)
         self.view.draw_all()
 
     def end_pan(self, e):
         self.drag_start = None
         self.canvas.config(cursor="")
+        self.cancel_operation()
 
     def on_wheel(self, e, delta=None):
         d = delta if delta else e.delta
@@ -306,16 +390,3 @@ class SceneCADApp:
         self.trans.zoom_at_point(zoom_factor, e.x, e.y)
         self.view.draw_all()
         self.update_status_bar()
-
-    def update_status_bar(self):
-        wx, wy = self.last_mouse_world
-        scale_pct = int((self.trans.scale / self.trans.BASE_SCALE) * 100)
-        angle_deg = degrees(self.trans.rotation_angle) % 360
-        tools = {'segment': 'Отрезок', 'pan': 'Панорама', 'delete': 'Удаление'}
-        active_tool = tools.get(self.tool.get(), self.tool.get())
-
-        status_text = (f"Курсор (X, Y): {wx:.2f}, {wy:.2f}    |    "
-                       f"Масштаб: {scale_pct}%    |    "
-                       f"Поворот Вида: {angle_deg:.1f}°    |    "
-                       f"Активный Инструмент: {active_tool}")
-        self.status_bar.config(text=status_text)
