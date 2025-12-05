@@ -10,11 +10,11 @@ class Segment:
     """
     Класс для хранения геометрического отрезка. Теперь хранит имя стиля линии.
     """
-    def __init__(self, x1, y1, x2, y2, style_name, color):
+    def __init__(self, x1, y1, x2, y2, style_name, segment_id):
         self.x1, self.y1 = x1, y1
         self.x2, self.y2 = x2, y2
         self.style_name = style_name # Имя стиля, а не цвет
-        self.color = color # Пока оставим цвет, чтобы не усложнять. В идеале цвет должен быть в LineStyle
+        self.segment_id = segment_id
 
     def length(self):
         """Вычисляет длину отрезка."""
@@ -31,7 +31,8 @@ class Segment:
         length = self.length()
         angle = self.angle(as_degrees)
 
-        desc = (f"Начало: ({self.x1:.2f}, {self.y1:.2f})\n"
+        desc = (f"Отрезок #{self.segment_id}\n"
+                f"Начало: ({self.x1:.2f}, {self.y1:.2f})\n"
                 f"Конец: ({self.x2:.2f}, {self.y2:.2f})\n"
                 f"Длина: {length:.2f}\n"
                 f"Угол: {angle:.2f} {unit}\n"

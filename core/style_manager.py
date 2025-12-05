@@ -17,21 +17,17 @@ class StyleManager:
         s = LineStyle.BASIC_THICKNESS_S
         s_half = LineStyle.BASIC_THICKNESS_S_HALF
 
-        # Шаблоны в мировых единицах, используемые для описания и логики
-        dash = LineStyle.DASH_LEN
-        space = LineStyle.SPACE_LEN
-        dot = LineStyle.DOT_LEN
-
         default_styles = [
-            LineStyle("Сплошная основная", s, (), True, "#E0E0E0"),
-            LineStyle("Сплошная тонкая", s_half, (), True, "#C0C0C0"),
-            LineStyle("Штриховая", s_half, (dash, space), True, "#999999"),
-            LineStyle("Штрихпунктирная утолщенная", s, (dash, space, dot, space), True, "#66CCFF"),
-            LineStyle("Штрихпунктирная тонкая", s_half, (dash, space, dot, space), True, "#66CCFF"),
-            LineStyle("Штрихпунктирная с двумя точками", s_half, (dash, space, dot, space, dot, space), True,
-                      "#FF6666"),
-            LineStyle("Сплошная волнистая", s_half, (), True, "#E09999"),
-            LineStyle("Сплошная тонкая с изломами", s_half, (), True, "#E09999"),
+            LineStyle("Сплошная основная", s, (), True, "#E0E0E0", thickness_class="s"),
+            LineStyle("Сплошная тонкая", s_half, (), True, "#C0C0C0", thickness_class="s_half"),
+            LineStyle("Штриховая", s_half, (8.0, 2.0), True, "#999999", thickness_class="s_half"),
+            LineStyle("Штрихпунктирная утолщенная", s, (24.0, 4.0, 2.0, 4.0), True, "#66CCFF", thickness_class="s"),
+            LineStyle("Штрихпунктирная тонкая", s_half, (24.0, 4.0, 2.0, 4.0), True, "#66CCFF",
+                      thickness_class="s_half"),
+            LineStyle("Штрихпунктирная с двумя точками", s_half, (24.0, 4.0, 2.0, 4.0, 2.0, 4.0), True,
+                      "#FF6666", thickness_class="s_half"),
+            LineStyle("Сплошная волнистая", s_half, (), True, "#E09999", thickness_class="s_half"),
+            LineStyle("Сплошная тонкая с изломами", s_half, (), True, "#E09999", thickness_class="s_half"),
         ]
 
         for style in default_styles:
@@ -45,11 +41,14 @@ class StyleManager:
         """Возвращает список имен всех стилей."""
         return list(self.styles.keys())
 
-    def add_style(self, name, thickness_mm, dash_pattern=(), color="#FFFFFF", is_basic=False):
+    def add_style(self, name, thickness_mm, dash_pattern=(), color="#FFFFFF", is_basic=False, thickness_class=None):
         """Добавляет новый пользовательский стиль."""
         if name in self.styles:
             raise ValueError(f"Стиль с именем '{name}' уже существует.")
-        self.styles[name] = LineStyle(name, thickness_mm, dash_pattern, is_basic, color)
+        thickness_class = thickness_class or LineStyle.infer_class(thickness_mm)
+        self._assert_valid_thickness(thickness_mm, thickness_class)
+        self.styles[name] = LineStyle(name, thickness_mm, dash_pattern, is_basic, color,
+                                      thickness_class=thickness_class)
 
     def update_style(self, name, **kwargs):
         """Обновляет параметры существующего стиля."""
@@ -57,12 +56,18 @@ class StyleManager:
         if not style:
             raise KeyError(f"Стиль '{name}' не найден.")
 
-        if 'thickness_mm' in kwargs:
-            style.thickness_mm = kwargs['thickness_mm']
+        new_thickness = kwargs.get('thickness_mm', style.thickness_mm)
+        new_class = kwargs.get('thickness_class', style.thickness_class)
+        self._assert_valid_thickness(new_thickness, new_class)
+        style.thickness_mm = new_thickness
+        style.thickness_class = new_class
         if 'dash_pattern' in kwargs:
             style.dash_pattern = kwargs['dash_pattern']
         if 'color' in kwargs:
             style.color = kwargs['color']
+        if 'thickness_mm' not in kwargs and 'thickness_class' not in kwargs:
+            # уже все обновлено, но для совместимости возвращаем
+            pass
 
     def delete_style(self, name):
         """Удаляет пользовательский стиль."""
@@ -84,3 +89,14 @@ class StyleManager:
             self.current_style_name = name
             return True
         return False
+
+    @staticmethod
+    def _assert_valid_thickness(thickness_mm, thickness_class):
+        if thickness_class not in ("s", "s_half"):
+            raise ValueError("Неизвестный тип толщины линии.")
+        bounds = (0.5, 1.4) if thickness_class == "s" else (0.25, 0.7)
+        if not (bounds[0] <= thickness_mm <= bounds[1]):
+            raise ValueError(
+                f"Толщина {thickness_mm:.2f} мм выходит за пределы для типа '{thickness_class}'. "
+                f"Допустимо: {bounds[0]}—{bounds[1]} мм."
+            )

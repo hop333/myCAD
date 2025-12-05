@@ -30,6 +30,8 @@ class SceneCADApp(CADUI):
         self.tool = tk.StringVar(value="segment")
         self.snap_enabled = tk.BooleanVar(value=False)
         self.segment_color = self.style_manager.get_style(self.style_manager.current_style_name).color
+        self.selected_segments = set()
+        self.selection_style_var = tk.StringVar(value="")
 
         self.temp_point = None
         self.drag_start = None
@@ -48,12 +50,14 @@ class SceneCADApp(CADUI):
 
         # 3. Инициализация View и Transform
         self.trans = ViewTransform(self.canvas, self.scene)
-        self.view = CADView(self.canvas, self.trans, self.scene, self.style_manager)
+        self.view = CADView(self.canvas, self.trans, self.scene, self.style_manager,
+                            selection_provider=lambda: self.selected_segments)
 
         # 4. Биндинг событий
         self._bind_events()
         self.view.draw_all()
         self.update_status_bar()
+        self.update_selection_ui()
 
     # --- Методы UI и управления состоянием ---
 
@@ -79,6 +83,7 @@ class SceneCADApp(CADUI):
         self.root.bind("<Key-s>", lambda e: self.set_tool("segment"))
         self.root.bind("<Key-p>", lambda e: self.set_tool("pan"))
         self.root.bind("<Key-d>", lambda e: self.set_tool("delete"))
+        self.root.bind("<Key-v>", lambda e: self.set_tool("select"))
         self.root.bind("<Key-g>", lambda e: self.toggle_snap())
         self.root.bind("<Control-w>", lambda e: self.clear_scene())
         self.root.bind("<Key-l>", lambda e: self.rotate_view(15))
@@ -306,8 +311,10 @@ class SceneCADApp(CADUI):
     def clear_scene(self, e=None):
         if messagebox.askyesno("Подтверждение", "Очистить все объекты на сцене? (Ctrl+W)"):
             self.scene.clear()
+            self.selected_segments.clear()
             self.view.draw_all()
             self.update_info()
+            self.update_selection_ui()
 
     def cancel_operation(self, e=None):
         self.temp_point = None
@@ -318,7 +325,7 @@ class SceneCADApp(CADUI):
         wx, wy = self.last_mouse_world
         scale_pct = int((self.trans.scale / self.trans.BASE_SCALE) * 100)
         angle_deg = degrees(self.trans.rotation_angle) % 360
-        tools = {'segment': 'Отрезок', 'pan': 'Панорама', 'delete': 'Удаление'}
+        tools = {'segment': 'Отрезок', 'pan': 'Панорама', 'delete': 'Удаление', 'select': 'Выбор'}
         active_tool = tools.get(self.tool.get(), self.tool.get())
 
         status_text = (f"Курсор (X, Y): {wx:.2f}, {wy:.2f}    |    "
@@ -356,14 +363,19 @@ class SceneCADApp(CADUI):
             for i in range(len(self.scene.segments) - 1, -1, -1):
                 s = self.scene.segments[i]
                 if distance_point_to_segment(wx, wy, s.x1, s.y1, s.x2, s.y2) < tolerance:
-                    del self.scene.segments[i]
+                    removed = self.scene.segments.pop(i)
+                    self.selected_segments.discard(removed)
                     self.view.draw_all()
                     self.update_info()
+                    self.update_selection_ui()
                     break
 
         elif self.tool.get() == "pan":
             self.drag_start = (e.x, e.y)
             self.canvas.config(cursor="fleur")
+
+        elif self.tool.get() == "select":
+            self._handle_selection_click(wx, wy, bool(e.state & 0x0001))
 
     def on_mouse_move(self, e):
         wx, wy = self.get_world_coords(e)
@@ -378,6 +390,121 @@ class SceneCADApp(CADUI):
         if self.tool.get() == "pan":
             self.pan_drag(e)
 
+    # --- Методы выбора и свойств ---
+
+    def _handle_selection_click(self, wx, wy, additive=False):
+        seg = self._find_segment_at(wx, wy)
+        if not seg and not additive:
+            self.selected_segments.clear()
+        elif seg:
+            if additive:
+                if seg in self.selected_segments:
+                    self.selected_segments.remove(seg)
+                else:
+                    self.selected_segments.add(seg)
+            else:
+                self.selected_segments = {seg}
+
+        self.update_selection_ui()
+        self.view.draw_all()
+
+    def _find_segment_at(self, wx, wy):
+        tolerance = 8 / self.trans.scale
+        closest = None
+        closest_dist = float("inf")
+        for seg in self.scene.segments:
+            dist = distance_point_to_segment(wx, wy, seg.x1, seg.y1, seg.x2, seg.y2)
+            if dist < tolerance and dist < closest_dist:
+                closest = seg
+                closest_dist = dist
+        return closest
+
+    def update_selection_ui(self):
+        if not hasattr(self, "selection_info_label"):
+            return
+
+        count = len(self.selected_segments)
+        if count == 0:
+            self.selection_info_label.config(text="Ничего не выбрано")
+            self.selection_style_state_label.config(text="—")
+            self.selection_style_var.set("")
+            self.selection_style_combobox.set("")
+            self.selection_style_combobox.config(state="disabled")
+            self.render_style_preview(self.selection_preview_canvas, None)
+            self.selection_apply_btn.config(state="disabled")
+            self._set_selection_details("Выделите один или несколько объектов, чтобы увидеть их свойства.")
+            return
+
+        self.selection_info_label.config(text=f"Выбрано объектов: {count}")
+        self.selection_style_combobox.config(state="readonly")
+        self.selection_apply_btn.config(state="normal")
+
+        styles = {seg.style_name for seg in self.selected_segments}
+        if len(styles) == 1:
+            style_name = styles.pop()
+            self.selection_style_var.set(style_name)
+            self.selection_style_combobox.set(style_name)
+            style = self.style_manager.get_style(style_name)
+            self.render_style_preview(self.selection_preview_canvas, style)
+            self.selection_style_state_label.config(text=style_name)
+        else:
+            self.selection_style_var.set("")
+            self.selection_style_combobox.set("")
+            self.render_style_preview(self.selection_preview_canvas, None)
+            self.selection_style_state_label.config(text="Разные")
+
+        self._set_selection_details(self._build_selection_details())
+
+    def apply_style_to_selection(self, style_name=None):
+        if not self.selected_segments:
+            return
+        style_name = style_name or self.selection_style_var.get()
+        if not style_name:
+            return
+        style = self.style_manager.get_style(style_name)
+        if not style:
+            return
+        for seg in self.selected_segments:
+            seg.style_name = style_name
+        self.selection_style_var.set(style_name)
+        if hasattr(self, "selection_style_combobox"):
+            self.selection_style_combobox.set(style_name)
+        self.render_style_preview(self.selection_preview_canvas, style)
+        self.selection_style_state_label.config(text=style_name)
+        self.view.draw_all()
+        self.update_selection_ui()
+
+    def _ordered_selected_objects(self):
+        return sorted(self.selected_segments, key=lambda obj: getattr(obj, "segment_id", 0))
+
+    def _build_selection_details(self):
+        objects = self._ordered_selected_objects()
+        if not objects:
+            return ""
+        details = [self._format_object_info(obj) for obj in objects]
+        return "\n\n".join(details)
+
+    def _format_object_info(self, obj):
+        if hasattr(obj, "segment_id"):
+            length = obj.length()
+            angle = obj.angle(True)
+            return (f"Отрезок #{obj.segment_id}\n"
+                    f"Начало: ({obj.x1:.2f}, {obj.y1:.2f})   Конец: ({obj.x2:.2f}, {obj.y2:.2f})\n"
+                    f"Длина: {length:.2f}   Угол: {angle:.2f}°   Стиль: {obj.style_name}")
+        if hasattr(obj, "describe"):
+            try:
+                return obj.describe(True)
+            except TypeError:
+                return obj.describe()
+        return f"Объект: {getattr(obj, 'name', repr(obj))}"
+
+    def _set_selection_details(self, text):
+        if not hasattr(self, "selection_details_text"):
+            return
+        self.selection_details_text.config(state=tk.NORMAL)
+        self.selection_details_text.delete(1.0, tk.END)
+        self.selection_details_text.insert(tk.END, text.strip() if text else "")
+        self.selection_details_text.config(state=tk.DISABLED)
     def start_pan(self, e):
         self.drag_start = (e.x, e.y)
         self.canvas.config(cursor="fleur")
